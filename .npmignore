@@ -1,0 +1,26 @@
+# Node modules and build artifacts
+node_modules/
+build/
+dist/
+tmp/
+*.log
+
+# Environment files
+.env
+
+# Test files and configuration
+test/
+*.spec.js
+*.test.js
+
+# Documentation
+README.md
+LICENSE
+
+# OS and editor files
+.DS_Store
+*.swp
+*.swo
+
+# Others
+*.md
