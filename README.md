@@ -44,6 +44,8 @@ Or with Yarn:
 yarn add -D ts-extended-deprecation-plugin
 ```
 
+**Note:** If you're using Visual Studio Code, you'll have to use the first approach above, with a path to the module, or run the "TypeScript: Select TypeScript Version" command and choose "Use Workspace Version", or click the version number between "TypeScript" and 😃 in the lower-right corner. Otherwise, VS Code will not be able to find your plugin. See https://github.com/microsoft/TypeScript/wiki/Writing-a-Language-Service-Plugin#testing-locally
+
 ### Configuration
 
 To use this plugin in your TypeScript project, add it to your `tsconfig.json`:
