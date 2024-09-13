@@ -5,7 +5,7 @@
 <div align="center">
   <a href="https://github.com/puj/ts-extended-deprecation-plugin">
     <img width="200" height="200"
-      src="https://github.com/user-attachments/assets/3ff80c8f-b354-4d0f-a417-5d6a2a96ec78">
+      src="https://github.com/user-attachments/assets/6a26e4c0-3869-4f6c-ae50-366ac13dae2c">
   </a>
   <h1>TS Extended Deprecation Plugin</h1>
   <p>A TypeScript Language Service Plugin for detecting and highlighting deprecated symbols in TypeScript and JavaScript projects.</p>
