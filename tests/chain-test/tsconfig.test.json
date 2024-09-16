@@ -1,0 +1,11 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es6",
+        "noEmitOnError": true,
+        "declaration": false,
+        "skipLibCheck": true,
+        "plugins": [{ "transform": "ts-extended-deprecation-plugin" }]
+    },
+    "include": ["./**/*.ts"]
+}

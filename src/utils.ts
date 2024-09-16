@@ -33,23 +33,23 @@ export const isSymbolDeprecated = symbol => {
         console.log(`[DEPRECATION PLUGIN] Found ${declarations.length} declarations for symbol ${symbol.getName()}`);
     }
 
-    for (const declaration of declarations) {
-        // Retrieve all comments preceding the declaration
-        const comments = getAllPrecedingComments(declaration);
+    return declarations.some(isDeclaractionDeprecated);
+};
 
-        if (comments.length > 0) {
-            console.log(`[DEPRECATION PLUGIN] Checking symbol: ${symbol.getName()}`);
-            console.log(`[DEPRECATION PLUGIN] Found ${comments.length} comments.`);
-            console.log(`[DEPRECATION PLUGIN] Comments: ${comments}`);
-        }
-        for (const comment of comments) {
-            if (comment.includes("@deprecated")) {
-                console.log(`[DEPRECATION PLUGIN] Symbol ${symbol.getName()} is deprecated.`);
-                return true;
-            }
+export const isDeclaractionDeprecated = declaration => {
+    console.log(`[DEPRECATION PLUGIN] Checking if declaration is deprecated: ${declaration.getText()}`);
+    // Retrieve all comments preceding the declaration
+    const comments = getAllPrecedingComments(declaration);
+
+    if (comments.length > 0) {
+        console.log(`[DEPRECATION PLUGIN] Found ${comments.length} comments.`);
+        console.log(`[DEPRECATION PLUGIN] Comments: ${comments}`);
+    }
+    for (const comment of comments) {
+        if (comment.includes("@deprecated")) {
+            return true;
         }
     }
-
     return false;
 };
 
