@@ -1,6 +1,7 @@
 import * as ts from "typescript";
 import {
     findNodeAtPosition,
+    getCommentsFromDeclaration,
     getCommentsFromNode,
     getSymbolAtNode,
     isDeclarationDeprecated,
@@ -103,224 +104,279 @@ const createDeprecatedQuickInfoTag = (symbol: ts.Symbol, checker: ts.TypeChecker
 const isImportExportDeclarationDeprecated = (
     node: ts.Node,
     checker: ts.TypeChecker,
-    log: (message: string) => void
+    log: (message: string) => void,
+    program: ts.Program
 ) => {
-    const symbol = getSymbolAtNode(checker, node);
-
     // Handle Import Declarations
     if (ts.isImportDeclaration(node)) {
+        log(`[IMPORT] Checking import declaration: ${node.getText()}`);
         const importClause = node.importClause;
         if (importClause && importClause.namedBindings) {
             const namedBindings = importClause.namedBindings;
             if (ts.isNamedImports(namedBindings)) {
-                // <----- This is where we see "TempUtils"
-                const moduleSpecifier = node.moduleSpecifier;
-                log(`[IMPORT] Checking module specifier: ${moduleSpecifier.getText()}`);
-                const moduleSymbol = checker.getSymbolAtLocation(moduleSpecifier);
-                log(`[IMPORT] Found module symbol: ${moduleSymbol?.getName()}`);
+                const moduleSpecifier = node.moduleSpecifier as ts.StringLiteral;
+                const moduleName = moduleSpecifier.text;
+                const sourceFile = node.getSourceFile();
 
-                // How do we actually get to the file for "TempUtils"?
-                // How do we scan the exports of "TempUtils"?
-                log(`[IMPORT] Checking import clause: ${importClause.getText()}`);
+                log(`[IMPORT] Resolving module specifier: "${moduleName}" from "${sourceFile.fileName}"`);
 
-                const isModuleSymbolAnAlias = moduleSymbol?.flags & ts.SymbolFlags.Alias;
-                if (isModuleSymbolAnAlias) {
-                    const aliasedModuleSymbol = checker.getAliasedSymbol(moduleSymbol);
-                    log(`[IMPORT] Module symbol is an alias. Checking alias: ${aliasedModuleSymbol?.getName()}`);
-                    if (isSymbolDeprecatedRecursively(aliasedModuleSymbol, checker, log)) {
-                        return createDeprecatedDiagnostic(node, aliasedModuleSymbol, node.getSourceFile(), [], log);
-                    }
-                }
+                // Resolve the module to get the file name
+                const resolvedModule = ts.resolveModuleName(
+                    moduleName,
+                    sourceFile.fileName,
+                    program.getCompilerOptions(),
+                    ts.sys
+                );
 
-                if (moduleSymbol) {
-                    const exports = checker.getExportsOfModule(moduleSymbol);
-                    log(`[IMPORT] Found ${exports.length} exports in module.`);
-                    for (const element of namedBindings.elements) {
-                        log(`[IMPORT] Checking import element: ${element.name.text}`);
-                        const name = element.name.text;
-                        const exportSymbol = exports.find(s => s.name === name);
-                        const exportSymbolDeclaration = exportSymbol?.getDeclarations()?.[0];
+                if (resolvedModule.resolvedModule) {
+                    const resolvedFileName = resolvedModule.resolvedModule.resolvedFileName;
+                    log(`[IMPORT] Resolved module "${moduleName}" to "${resolvedFileName}"`);
 
-                        /**
-                         * Check if the parent node of the export symbol is deprecated.
-                         */
-                        let exportSymbolParent = exportSymbolDeclaration?.parent;
-                        while (exportSymbolParent && !ts.isSourceFile(exportSymbolParent)) {
-                            const isExportSymbolParentDeprecated = isNodeDeprecated(checker, exportSymbolParent);
-                            log(`[IMPORT] Parent node is deprecated: ${isExportSymbolParentDeprecated}`);
-                            if (isExportSymbolParentDeprecated) {
-                                return createDeprecatedDiagnostic(
-                                    node,
-                                    exportSymbol,
-                                    exportSymbolDeclaration.getSourceFile(),
-                                    [],
-                                    log,
-                                    exportSymbolDeclaration
-                                );
-                            }
-                            exportSymbolParent = exportSymbolParent?.parent;
-                        }
+                    const moduleSourceFile = program.getSourceFile(resolvedFileName);
 
-                        if (isDeclarationDeprecated(exportSymbolDeclaration)) {
-                            log(`[IMPORT] Import declaration ${exportSymbol.name} is deprecated`);
-                            return createDeprecatedDiagnostic(
-                                node,
-                                getSymbolAtNode(checker, node),
-                                node.getSourceFile(),
-                                [],
-                                log,
-                                exportSymbolDeclaration
+                    if (moduleSourceFile) {
+                        // Get the module symbol from the source file
+                        const moduleSymbol = checker.getSymbolAtLocation(moduleSourceFile);
+
+                        if (moduleSymbol) {
+                            const exports = checker.getExportsOfModule(moduleSymbol);
+                            log(
+                                `[IMPORT] Found ${exports.length} exports in module "${
+                                    moduleSourceFile.getSourceFile().fileName
+                                }"`
                             );
-                        }
 
-                        if (exportSymbol) {
-                            log(`[IMPORT] Checking imported symbol: ${exportSymbol.getName()}`);
-                            if (isSymbolDeprecatedRecursively(exportSymbol, checker, log)) {
-                                return createDeprecatedDiagnostic(
-                                    node,
-                                    getSymbolAtNode(checker, node),
-                                    node.getSourceFile(),
-                                    [],
-                                    log,
-                                    exportSymbolDeclaration
-                                );
+                            for (const element of namedBindings.elements) {
+                                const importName = element.name.text;
+                                const exportSymbol = exports.find(s => s.name === importName);
+                                const exportSymbolDeclaration = exportSymbol?.getDeclarations()?.[0];
+
+                                /**
+                                 * Check if the parent node of the export symbol is deprecated.
+                                 */
+                                let exportSymbolParent = exportSymbolDeclaration?.parent;
+                                while (exportSymbolParent && !ts.isSourceFile(exportSymbolParent)) {
+                                    const isExportSymbolParentDeprecated = isNodeDeprecated(
+                                        checker,
+                                        exportSymbolParent
+                                    );
+                                    log(`[IMPORT] Parent node is deprecated: ${isExportSymbolParentDeprecated}`);
+                                    if (isExportSymbolParentDeprecated) {
+                                        let importNode = undefined;
+                                        node.forEachChild(child => {
+                                            log(`[IMPORT] Child: ${child.getText()}`);
+                                            child.forEachChild(namedImport => {
+                                                log(`[IMPORT] Named Import: ${namedImport.getText()}`);
+                                                namedImport.forEachChild(importSpec => {
+                                                    log(`[IMPORT] Import Specifier: ${importSpec.getText()}`);
+                                                    if (importSpec.getText() === importName) {
+                                                        importNode = importSpec;
+                                                    }
+                                                });
+                                            });
+                                        });
+
+                                        return createDeprecatedDiagnostic(
+                                            importNode,
+                                            exportSymbol,
+                                            exportSymbolDeclaration.getSourceFile(),
+                                            [],
+                                            log,
+                                            exportSymbolDeclaration
+                                        );
+                                    }
+                                    exportSymbolParent = exportSymbolParent?.parent;
+                                }
+
+                                if (exportSymbol) {
+                                    log(
+                                        `[IMPORT] Checking export "${importName}" in module "${
+                                            moduleSourceFile.getSourceFile().fileName
+                                        }"`
+                                    );
+                                    const declarations = exportSymbol.getDeclarations();
+                                    if (declarations && declarations.length > 0) {
+                                        const declaration = declarations[0];
+
+                                        const declarationComments = getCommentsFromDeclaration(declaration);
+                                        if (declarationComments.length > 0) {
+                                            log(
+                                                `[IMPORT] Found comments on declaration: ${declarationComments.join(
+                                                    "\n"
+                                                )}`
+                                            );
+                                        }
+
+                                        if (isDeclarationDeprecated(declaration)) {
+                                            log(`[IMPORT] Import "${importName}" is deprecated in "${moduleName}"`);
+
+                                            // Get the node of the named import within the original node
+                                            const importNode = node
+                                                .getChildren()
+                                                .find(child => ts.isNamedImports(child))
+                                                ?.getChildren()
+                                                .find(
+                                                    child =>
+                                                        ts.isImportSpecifier(child) && child.name.text === importName
+                                                );
+
+                                            return createDeprecatedDiagnostic(
+                                                importNode,
+                                                exportSymbol,
+                                                node.getSourceFile(),
+                                                [],
+                                                log,
+                                                declaration
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    log(`[IMPORT] Could not find export "${importName}" in module "${moduleName}"`);
+                                }
                             }
+                        } else {
+                            log(`[IMPORT] Could not get symbol for module "${moduleName}"`);
                         }
+                    } else {
+                        log(`[IMPORT] Could not get source file for "${resolvedFileName}"`);
                     }
+                } else {
+                    log(`[IMPORT] Could not resolve module "${moduleName}"`);
                 }
             }
         }
     }
+
     // Handle Export Declarations
-    if (ts.isExportDeclaration(node)) {
-        log(`[EXPORT] Checking export declaration: ${node.getText()}`);
-        const exportClause = node.exportClause;
+    // if (ts.isExportDeclaration(node)) {
+    //     log(`[EXPORT] Checking export declaration: ${node.getText()}`);
+    //     const exportClause = node.exportClause;
 
-        if (exportClause && ts.isNamedExports(exportClause)) {
-            const moduleSpecifier = node.moduleSpecifier;
-            let exportedSymbols: ts.Symbol[] = [];
+    //     if (exportClause && ts.isNamedExports(exportClause)) {
+    //         const moduleSpecifier = node.moduleSpecifier;
+    //         let exportedSymbols: ts.Symbol[] = [];
 
-            if (moduleSpecifier) {
-                // Re-exporting from another module
-                log(`[EXPORT] Module specifier found: ${moduleSpecifier.getText()}`);
-                const moduleSymbol = checker.getSymbolAtLocation(moduleSpecifier);
-                if (moduleSymbol) {
-                    exportedSymbols = checker.getExportsOfModule(moduleSymbol);
-                    log(`[EXPORT] Found ${exportedSymbols.length} exports in module.`);
-                }
-            }
+    //         if (moduleSpecifier) {
+    //             // Re-exporting from another module
+    //             log(`[EXPORT] Module specifier found: ${moduleSpecifier.getText()}`);
+    //             const moduleSymbol = checker.getSymbolAtLocation(moduleSpecifier);
+    //             if (moduleSymbol) {
+    //                 exportedSymbols = checker.getExportsOfModule(moduleSymbol);
+    //                 log(`[EXPORT] Found ${exportedSymbols.length} exports in module.`);
+    //             }
+    //         }
 
-            // Handle named exports like `export { X }` or `export { X } from "module"`
-            for (const element of exportClause.elements) {
-                const exportName = element.name.text;
-                log(`[EXPORT] Checking export element: ${exportName}`);
+    //         // Handle named exports like `export { X }` or `export { X } from "module"`
+    //         for (const element of exportClause.elements) {
+    //             const exportName = element.name.text;
+    //             log(`[EXPORT] Checking export element: ${exportName}`);
 
-                let exportSymbol: ts.Symbol | undefined;
+    //             let exportSymbol: ts.Symbol | undefined;
 
-                if (moduleSpecifier && exportedSymbols.length > 0) {
-                    // If re-exporting from a module, find the symbol in the module's exports
-                    exportSymbol = exportedSymbols.find(s => s.name === exportName);
-                } else {
-                    // Otherwise, get the symbol from the local scope
-                    exportSymbol = checker.getSymbolAtLocation(element.name);
-                }
+    //             if (moduleSpecifier && exportedSymbols.length > 0) {
+    //                 // If re-exporting from a module, find the symbol in the module's exports
+    //                 exportSymbol = exportedSymbols.find(s => s.name === exportName);
+    //             } else {
+    //                 // Otherwise, get the symbol from the local scope
+    //                 exportSymbol = checker.getSymbolAtLocation(element.name);
+    //             }
 
-                if (exportSymbol) {
-                    const exportDeclaration = exportSymbol.getDeclarations()?.[0];
+    //             if (exportSymbol) {
+    //                 const exportDeclaration = exportSymbol.getDeclarations()?.[0];
 
-                    // Check parent nodes for deprecation
-                    let parentNode = exportDeclaration?.parent;
-                    while (parentNode && !ts.isSourceFile(parentNode)) {
-                        const isParentDeprecated = isNodeDeprecated(checker, parentNode);
-                        log(`[EXPORT] Parent node is deprecated: ${isParentDeprecated}`);
-                        if (isParentDeprecated) {
-                            return createDeprecatedDiagnostic(
-                                node,
-                                exportSymbol,
-                                node.getSourceFile(),
-                                [],
-                                log,
-                                exportDeclaration
-                            );
-                        }
-                        parentNode = parentNode.parent;
-                    }
+    //                 // Check parent nodes for deprecation
+    //                 let parentNode = exportDeclaration?.parent;
+    //                 while (parentNode && !ts.isSourceFile(parentNode)) {
+    //                     const isParentDeprecated = isNodeDeprecated(checker, parentNode);
+    //                     log(`[EXPORT] Parent node is deprecated: ${isParentDeprecated}`);
+    //                     if (isParentDeprecated) {
+    //                         return createDeprecatedDiagnostic(
+    //                             node,
+    //                             exportSymbol,
+    //                             node.getSourceFile(),
+    //                             [],
+    //                             log,
+    //                             exportDeclaration
+    //                         );
+    //                     }
+    //                     parentNode = parentNode.parent;
+    //                 }
 
-                    // Check if the export declaration itself is deprecated
-                    if (isDeclarationDeprecated(exportDeclaration)) {
-                        log(`[EXPORT] Export declaration ${exportSymbol.getName()} is deprecated`);
-                        return createDeprecatedDiagnostic(
-                            exportDeclaration,
-                            exportSymbol,
-                            node.getSourceFile(),
-                            [],
-                            log,
-                            exportDeclaration
-                        );
-                    }
+    //                 // Check if the export declaration itself is deprecated
+    //                 if (isDeclarationDeprecated(exportDeclaration)) {
+    //                     log(`[EXPORT] Export declaration ${exportSymbol.getName()} is deprecated`);
+    //                     return createDeprecatedDiagnostic(
+    //                         exportDeclaration,
+    //                         exportSymbol,
+    //                         node.getSourceFile(),
+    //                         [],
+    //                         log,
+    //                         exportDeclaration
+    //                     );
+    //                 }
 
-                    // Check if the symbol is deprecated recursively
-                    if (isSymbolDeprecatedRecursively(exportSymbol, checker, log)) {
-                        log(`[EXPORT] Exported symbol ${exportSymbol.getName()} is deprecated recursively`);
-                        return createDeprecatedDiagnostic(node, exportSymbol, node.getSourceFile(), [], log);
-                    }
-                } else {
-                    log(`[EXPORT] Could not find symbol for export element: ${exportName}`);
-                }
-            }
-        } else if (node.moduleSpecifier) {
-            // Handle `export * from "module"` (wildcard re-exports)
-            const moduleSpecifier = node.moduleSpecifier;
-            log(`[EXPORT] Checking module specifier: ${moduleSpecifier.getText()}`);
-            const moduleSymbol = checker.getSymbolAtLocation(moduleSpecifier);
-            if (moduleSymbol) {
-                const exportedSymbols = checker.getExportsOfModule(moduleSymbol);
-                log(`[EXPORT] Found ${exportedSymbols.length} exports in module.`);
-                for (const exportSymbol of exportedSymbols) {
-                    log(`[EXPORT] Checking re-exported symbol: ${exportSymbol.getName()}`);
-                    const exportDeclaration = exportSymbol.getDeclarations()?.[0];
+    //                 // Check if the symbol is deprecated recursively
+    //                 if (isSymbolDeprecatedRecursively(exportSymbol, checker, log)) {
+    //                     log(`[EXPORT] Exported symbol ${exportSymbol.getName()} is deprecated recursively`);
+    //                     return createDeprecatedDiagnostic(node, exportSymbol, node.getSourceFile(), [], log);
+    //                 }
+    //             } else {
+    //                 log(`[EXPORT] Could not find symbol for export element: ${exportName}`);
+    //             }
+    //         }
+    //     } else if (node.moduleSpecifier) {
+    //         // Handle `export * from "module"` (wildcard re-exports)
+    //         const moduleSpecifier = node.moduleSpecifier;
+    //         log(`[EXPORT] Checking module specifier: ${moduleSpecifier.getText()}`);
+    //         const moduleSymbol = checker.getSymbolAtLocation(moduleSpecifier);
+    //         if (moduleSymbol) {
+    //             const exportedSymbols = checker.getExportsOfModule(moduleSymbol);
+    //             log(`[EXPORT] Found ${exportedSymbols.length} exports in module.`);
+    //             for (const exportSymbol of exportedSymbols) {
+    //                 log(`[EXPORT] Checking re-exported symbol: ${exportSymbol.getName()}`);
+    //                 const exportDeclaration = exportSymbol.getDeclarations()?.[0];
 
-                    // Check parent nodes for deprecation
-                    let parentNode = exportDeclaration?.parent;
-                    while (parentNode && !ts.isSourceFile(parentNode)) {
-                        const isParentDeprecated = isNodeDeprecated(checker, parentNode);
-                        log(`[EXPORT] Parent node is deprecated: ${isParentDeprecated}`);
-                        if (isParentDeprecated) {
-                            log(`[EXPORT] Re-exported symbol's parent node is deprecated`);
-                            return createDeprecatedDiagnostic(
-                                node,
-                                symbol,
-                                node.getSourceFile(),
-                                [],
-                                log,
-                                exportDeclaration
-                            );
-                        }
-                        parentNode = parentNode.parent;
-                    }
+    //                 // Check parent nodes for deprecation
+    //                 let parentNode = exportDeclaration?.parent;
+    //                 while (parentNode && !ts.isSourceFile(parentNode)) {
+    //                     const isParentDeprecated = isNodeDeprecated(checker, parentNode);
+    //                     log(`[EXPORT] Parent node is deprecated: ${isParentDeprecated}`);
+    //                     if (isParentDeprecated) {
+    //                         log(`[EXPORT] Re-exported symbol's parent node is deprecated`);
+    //                         return createDeprecatedDiagnostic(
+    //                             node,
+    //                             symbol,
+    //                             node.getSourceFile(),
+    //                             [],
+    //                             log,
+    //                             exportDeclaration
+    //                         );
+    //                     }
+    //                     parentNode = parentNode.parent;
+    //                 }
 
-                    // Check if the export declaration itself is deprecated
-                    if (isDeclarationDeprecated(exportDeclaration)) {
-                        log(`[EXPORT] Re-exported symbol ${exportSymbol.getName()} is deprecated`);
-                        return createDeprecatedDiagnostic(
-                            node,
-                            symbol,
-                            node.getSourceFile(),
-                            [],
-                            log,
-                            exportDeclaration
-                        );
-                    }
+    //                 // Check if the export declaration itself is deprecated
+    //                 if (isDeclarationDeprecated(exportDeclaration)) {
+    //                     log(`[EXPORT] Re-exported symbol ${exportSymbol.getName()} is deprecated`);
+    //                     return createDeprecatedDiagnostic(
+    //                         node,
+    //                         symbol,
+    //                         node.getSourceFile(),
+    //                         [],
+    //                         log,
+    //                         exportDeclaration
+    //                     );
+    //                 }
 
-                    // Check if the symbol is deprecated recursively
-                    if (isSymbolDeprecatedRecursively(exportSymbol, checker, log)) {
-                        log(`[EXPORT] Re-exported symbol ${exportSymbol.getName()} is deprecated recursively`);
-                        return createDeprecatedDiagnostic(node, exportSymbol, node.getSourceFile(), [], log);
-                    }
-                }
-            }
-        }
-    }
+    //                 // Check if the symbol is deprecated recursively
+    //                 if (isSymbolDeprecatedRecursively(exportSymbol, checker, log)) {
+    //                     log(`[EXPORT] Re-exported symbol ${exportSymbol.getName()} is deprecated recursively`);
+    //                     return createDeprecatedDiagnostic(node, exportSymbol, node.getSourceFile(), [], log);
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 };
 
 // Resolve the symbol and follow alias chain to check for deprecations
@@ -386,12 +442,12 @@ const init = ({ typescript: ts }) => {
 
             // Logging to TypeScript Server
             const log = (message: string) => {
-                // Or use the logger if available
-                if (info.project && info.project.projectService && info.project.projectService.logger) {
-                    info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
-                } else {
-                    console.log(`[DEPRECATION PLUGIN]: ${message}`);
-                }
+                // // Or use the logger if available
+                // if (info.project && info.project.projectService && info.project.projectService.logger) {
+                //     info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
+                // } else {
+                //     console.log(`[DEPRECATION PLUGIN]: ${message}`);
+                // }
             };
 
             log("Plugin Initialized - hotloading");
@@ -427,7 +483,8 @@ const init = ({ typescript: ts }) => {
             const checkDiagnostics = (
                 fileName: string,
                 priorDiagnostics: Diagnostic[],
-                category: ts.DiagnosticCategory
+                category: ts.DiagnosticCategory,
+                program = info.languageService.getProgram()
             ) => {
                 const sourceFile = info.languageService.getProgram()?.getSourceFile(fileName);
                 const diagnostics: Diagnostic[] = [];
@@ -437,7 +494,12 @@ const init = ({ typescript: ts }) => {
 
                     const visit = (node: ts.Node) => {
                         // Use the re-export resolution logic for imports and exports
-                        const deprecatedAliasDiagnostic = isImportExportDeclarationDeprecated(node, checker, log);
+                        const deprecatedAliasDiagnostic = isImportExportDeclarationDeprecated(
+                            node,
+                            checker,
+                            log,
+                            program
+                        );
                         if (deprecatedAliasDiagnostic) {
                             deprecatedAliasDiagnostic.category = category;
                             diagnostics.push(deprecatedAliasDiagnostic);
