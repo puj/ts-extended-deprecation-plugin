@@ -4,7 +4,10 @@
         "target": "es2017", // Choose your target ES version
         "outDir": "./dist", // Output compiled JavaScript files into the dist folder
         "declaration": true, // Optional: Generate declaration files
-        "sourceMap": true // Optional: Generate source maps for debugging
+        "sourceMap": true, // Optional: Generate source maps for debugging
+        "rootDirs": ["src", "tests"],
+        "baseUrl": "./"
     },
-    "include": ["**/*"]
+    "include": ["**/*"],
+    "exclude": ["node_modules", "dist", "tests"]
 }

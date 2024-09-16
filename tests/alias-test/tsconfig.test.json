@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "module": "commonjs",
+        "target": "es6",
+        "noEmitOnError": true,
+        "declaration": false,
+        "skipLibCheck": true,
+        "plugins": [{ "transform": "ts-extended-deprecation-plugin" }]
+    },
+    "baseUrl": "./tests/alias-test",
+    "include": ["./**/*.ts"],
+    "paths": {
+        "Aliases": ["alias-export.ts"]
+    }
+}

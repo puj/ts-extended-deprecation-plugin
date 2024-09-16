@@ -10,5 +10,6 @@ module.exports = {
         ]
     },
     testRegex: "/.*\\.test.(ts|tsx|jsx|js)$",
-    moduleDirectories: ["node_modules", "bower_components", "shared"]
+    moduleDirectories: ["node_modules", "bower_components", "shared"],
+    modulePathIgnorePatterns: ["<rootDir>/dist/"]
 };
