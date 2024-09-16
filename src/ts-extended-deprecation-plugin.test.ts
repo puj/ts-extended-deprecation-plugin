@@ -1,6 +1,6 @@
 import * as ts from "typescript";
 import { Project } from "ts-morph";
-import { isSymbolDeprecated } from "./utils";
+import { getSymbolAtNode, isSymbolDeprecated } from "./utils";
 const init = require("./");
 
 describe("Deprecation Plugin Tests", () => {
@@ -21,12 +21,6 @@ describe("Deprecation Plugin Tests", () => {
         expect(isSupportedFileType("file.jsx")).toBe(true);
         expect(isSupportedFileType("file.txt")).toBe(false);
     });
-
-    // Helper function to retrieve the symbol at a node
-    const getSymbolAtNode = (checker, node) => {
-        const symbol = checker.getSymbolAtLocation(node.name);
-        return symbol;
-    };
 
     test("Correctly finds deprecated symbols in JSDoc", () => {
         // Mock TypeScript source code and initialize the program
@@ -70,7 +64,7 @@ describe("Deprecation Plugin Tests", () => {
             if (ts.isFunctionDeclaration(node)) {
                 const symbol = getSymbolAtNode(checker, node);
                 if (symbol) {
-                    if (isSymbolDeprecated(symbol, checker, node)) {
+                    if (isSymbolDeprecated(symbol)) {
                         foundDeprecated = true;
                     }
                 }
@@ -123,7 +117,7 @@ describe("Deprecation Plugin Tests", () => {
         const visit = node => {
             if (ts.isFunctionDeclaration(node)) {
                 const symbol = getSymbolAtNode(checker, node);
-                if (isSymbolDeprecated(symbol, checker, node)) {
+                if (isSymbolDeprecated(symbol)) {
                     foundDeprecated = true;
                 }
             }
@@ -138,6 +132,7 @@ describe("Deprecation Plugin Tests", () => {
 
     test("Plugin properly initializes and logs deprecated symbols", () => {
         const mockLogger = { info: jest.fn() };
+        // const sourceFile = ts.createSourceFile("test.ts", sourceCode, ts.ScriptTarget.Latest, true);
         const mockInfo = {
             project: {
                 projectService: {
@@ -163,6 +158,7 @@ describe("Deprecation Plugin Tests", () => {
                                 name: { text: "oldFunction" },
                                 getStart: jest.fn().mockReturnValue(0),
                                 getEnd: jest.fn().mockReturnValue(10)
+                                // getSourceFile: jest.fn().mockReturnValue(sourceFile) // Provide the sourceFile here
                             }
                         ]
                     })
@@ -178,19 +174,3 @@ describe("Deprecation Plugin Tests", () => {
         expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining("[DEPRECATION PLUGIN]"));
     });
 });
-
-// Helper functions
-const getPrecedingComments = (declaration, node) => {
-    const sourceFile = node.getSourceFile();
-    const fullText = sourceFile.getFullText();
-    const comments = [];
-
-    // Get the position of the declaration
-    const leadingCommentRanges = ts.getLeadingCommentRanges(fullText, declaration.getFullStart()) || [];
-    leadingCommentRanges.forEach(range => {
-        const comment = fullText.substring(range.pos, range.end);
-        comments.push(comment);
-    });
-
-    return comments;
-};
