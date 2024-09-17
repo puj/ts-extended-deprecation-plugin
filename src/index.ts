@@ -101,12 +101,15 @@ const createDeprecatedQuickInfoTag = (symbol: ts.Symbol, checker: ts.TypeChecker
 };
 
 // Traverse imports and re-exports to resolve and check for deprecations
-const isImportExportDeclarationDeprecated = (
-    node: ts.Node,
+const isImportDeclarationDeprecated = (
+    currentNode: ts.Node,
     checker: ts.TypeChecker,
     log: (message: string) => void,
     program: ts.Program
 ) => {
+    // Get the import node for the current node
+    let node = currentNode;
+
     // Handle Import Declarations
     if (ts.isImportDeclaration(node)) {
         log(`[IMPORT] Checking import declaration: ${node.getText()}`);
@@ -500,34 +503,59 @@ const init = ({ typescript: ts }) => {
                     log(`Checking ${fileName} for deprecated symbols`);
 
                     const visit = (node: ts.Node) => {
-                        // Use the re-export resolution logic for imports and exports
-                        const deprecatedAliasDiagnostic = isImportExportDeclarationDeprecated(
-                            node,
-                            checker,
-                            log,
-                            program
-                        );
+                        // First we check for imports
+                        const deprecatedAliasDiagnostic = isImportDeclarationDeprecated(node, checker, log, program);
                         if (deprecatedAliasDiagnostic) {
                             deprecatedAliasDiagnostic.category = category;
                             diagnostics.push(deprecatedAliasDiagnostic);
                             return;
+                        } else if (!ts.isImportDeclaration(node) && !ts.isExportDeclaration(node)) {
+                            // This will check for deprecated symbols in the source file by checkin the import declarations using the same logic as above
+                            if (node.getText() === "a") {
+                                log(`Checking non-import: ${node.getText()}`);
+
+                                // Get symbol at the location of `a`
+                                const symbol = checker.getSymbolAtLocation(node);
+                                if (symbol) {
+                                    log(`Symbol found: ${symbol.getName()}`);
+
+                                    // Find the first declaration associated with the symbol
+                                    const declaration = symbol.getDeclarations()?.[0];
+                                    if (declaration && ts.isImportSpecifier(declaration)) {
+                                        log(`Declaration found in import: ${declaration.getText()}`);
+
+                                        let importDeclaration: ts.Node = declaration;
+
+                                        // Get top-level import declaration
+                                        while (importDeclaration.parent) {
+                                            if (ts.isImportDeclaration(importDeclaration.parent)) {
+                                                importDeclaration = importDeclaration.parent;
+                                                break;
+                                            }
+                                            importDeclaration = importDeclaration.parent;
+                                        }
+
+                                        // Check if the import is deprecated
+                                        if (ts.isImportDeclaration(importDeclaration)) {
+                                            log(`Import parent: ${importDeclaration.getText()}`);
+
+                                            const deprecatedAliasDiagnostic = isImportDeclarationDeprecated(
+                                                importDeclaration,
+                                                checker,
+                                                log,
+                                                program
+                                            );
+                                            if (deprecatedAliasDiagnostic) {
+                                                deprecatedAliasDiagnostic.start = node.getStart();
+                                                deprecatedAliasDiagnostic.length = node.getEnd() - node.getStart();
+                                                diagnostics.push(deprecatedAliasDiagnostic);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        // // If the alias chain is not deprecated, check the symbol directly
-                        // const symbol = getSymbolAtNode(checker, node);
-                        // if (symbol && isSymbolDeprecatedRecursively(symbol, checker, log)) {
-                        //     const diagnostic = createDeprecatedDiagnostic(
-                        //         node,
-                        //         symbol,
-                        //         sourceFile,
-                        //         priorDiagnostics,
-                        //         log
-                        //     );
-                        //     if (diagnostic) {
-                        //         diagnostic.category = category;
-                        //         diagnostics.push(diagnostic);
-                        //     }
-                        // }
                         ts.forEachChild(node, visit);
                     };
 
