@@ -207,7 +207,7 @@ describe("Deprecation Plugin Tests", () => {
         const languageService = ts.createLanguageService(servicesHost, ts.createDocumentRegistry());
 
         // Load your plugin
-        const pluginModulePath = path.resolve(__dirname, "../dist/src/index.js");
+        const pluginModulePath = path.resolve(__dirname, "../dist/index.js");
         const pluginModule = require(pluginModulePath);
         const pluginFactory = pluginModule({ typescript: ts });
 
