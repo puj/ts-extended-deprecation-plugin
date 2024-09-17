@@ -11,16 +11,20 @@
   <p>A TypeScript Language Service Plugin for detecting and highlighting deprecated symbols in TypeScript and JavaScript projects.</p>
 </div>
 
-<div align="center">
-  <!-- Place for GIF demo -->
-  <img src="path/to/your/demo.gif" alt="Demo" width="600" />
-</div>
-
 ### Example Output
 
-![deprecatedBefore](https://github.com/user-attachments/assets/3f8a714d-0d22-4cea-b1fd-5d2369bd2846)
-
-![deprecatedAfter](https://github.com/user-attachments/assets/bf2a5ebe-1b53-483f-8ab5-6310a15f2e29)
+<table>
+  <tr>
+    <td align="center"><strong>BEFORE</strong></td>
+    <td align="center"><strong>AFTER</strong></td>
+  </tr>
+  <tr>
+    <td><img src="https://github.com/user-attachments/assets/3f8a714d-0d22-4cea-b1fd-5d2369bd2846"/></td>
+    <td><img src="https://github.com/user-attachments/assets/bf2a5ebe-1b53-483f-8ab5-6310a15f2e29"/></td>
+  </tr>
+</table>
+<strong>BEFORE:</strong> Deprecations are manually marked with comments and JSDoc, making them easy to miss.  
+<strong>AFTER:</strong> The plugin automatically highlights deprecated symbols directly in the code editor for immediate visibility.
 
 ## Usage
 
