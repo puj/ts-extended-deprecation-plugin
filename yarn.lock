@@ -3032,6 +3032,13 @@ to-regex-range@^5.0.1:
   dependencies:
     is-number "^7.0.0"
 
+ts-extended-deprecation-plugin@^1.2.1:
+  version "1.2.1"
+  resolved "https://registry.yarnpkg.com/ts-extended-deprecation-plugin/-/ts-extended-deprecation-plugin-1.2.1.tgz#2b029d336be0454afb03774b7d455e1f53deed77"
+  integrity sha512-0AnGY1NJDK18jKpka8ILCmpjgh6nbA44qOorJsoyeOPiNpsHegq4fZ0Z/fVTL09DTVQepMp38tZdecmumSPVHA==
+  dependencies:
+    typescript "^5.5.4"
+
 ts-jest@^29.1.0:
   version "29.2.5"
   resolved "https://registry.yarnpkg.com/ts-jest/-/ts-jest-29.2.5.tgz#591a3c108e1f5ebd013d3152142cb5472b399d63"

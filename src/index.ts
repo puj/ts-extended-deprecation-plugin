@@ -115,6 +115,7 @@ const isImportExportDeclarationDeprecated = (
             const namedBindings = importClause.namedBindings;
             if (ts.isNamedImports(namedBindings)) {
                 const moduleSpecifier = node.moduleSpecifier as ts.StringLiteral;
+
                 const moduleName = moduleSpecifier.text;
                 const sourceFile = node.getSourceFile();
 
@@ -131,6 +132,12 @@ const isImportExportDeclarationDeprecated = (
                 if (resolvedModule.resolvedModule) {
                     const resolvedFileName = resolvedModule.resolvedModule.resolvedFileName;
                     log(`[IMPORT] Resolved module "${moduleName}" to "${resolvedFileName}"`);
+
+                    // Skip node_modules
+                    if (resolvedFileName.includes("node_modules")) {
+                        log(`[IMPORT] Skipping node_modules`);
+                        return null;
+                    }
 
                     const moduleSourceFile = program.getSourceFile(resolvedFileName);
 
@@ -442,12 +449,12 @@ const init = ({ typescript: ts }) => {
 
             // Logging to TypeScript Server
             const log = (message: string) => {
-                // // Or use the logger if available
-                // if (info.project && info.project.projectService && info.project.projectService.logger) {
-                //     info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
-                // } else {
-                //     console.log(`[DEPRECATION PLUGIN]: ${message}`);
-                // }
+                // Or use the logger if available
+                if (info.project && info.project.projectService && info.project.projectService.logger) {
+                    info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
+                } else {
+                    console.log(`[DEPRECATION PLUGIN]: ${message}`);
+                }
             };
 
             log("Plugin Initialized - hotloading");
@@ -455,29 +462,29 @@ const init = ({ typescript: ts }) => {
             const checker: ts.TypeChecker | undefined = info.languageService.getProgram()?.getTypeChecker();
 
             // Hook into the quick info to display tooltips
-            proxy.getQuickInfoAtPosition = (fileName: string, position: number) => {
-                if (!isSupportedFileType(fileName)) return oldGetQuickInfoAtPosition(fileName, position);
+            // proxy.getQuickInfoAtPosition = (fileName: string, position: number) => {
+            //     if (!isSupportedFileType(fileName)) return oldGetQuickInfoAtPosition(fileName, position);
 
-                const quickInfo: ts.QuickInfo = oldGetQuickInfoAtPosition(fileName, position);
-                const sourceFile = info.languageService.getProgram()?.getSourceFile(fileName);
-                const node = findNodeAtPosition(sourceFile, position);
+            //     const quickInfo: ts.QuickInfo = oldGetQuickInfoAtPosition(fileName, position);
+            //     const sourceFile = info.languageService.getProgram()?.getSourceFile(fileName);
+            //     const node = findNodeAtPosition(sourceFile, position);
 
-                if (node && checker) {
-                    const symbol = checker.getSymbolAtLocation(node);
-                    if (symbol && isSymbolDeprecatedRecursively(symbol, checker, log)) {
-                        log(`Deprecated symbol detected: ${symbol.getName()}`);
+            //     if (node && checker) {
+            //         const symbol = checker.getSymbolAtLocation(node);
+            //         if (symbol && isSymbolDeprecatedRecursively(symbol, checker, log)) {
+            //             log(`Deprecated symbol detected: ${symbol.getName()}`);
 
-                        // Create detailed deprecation message with source information
-                        const deprecationTag = createDeprecatedQuickInfoTag(symbol, checker);
-                        if (deprecationTag) {
-                            quickInfo.tags = quickInfo.tags || [];
-                            quickInfo.tags.push(deprecationTag);
-                        }
-                    }
-                }
+            //             // Create detailed deprecation message with source information
+            //             const deprecationTag = createDeprecatedQuickInfoTag(symbol, checker);
+            //             if (deprecationTag) {
+            //                 quickInfo.tags = quickInfo.tags || [];
+            //                 quickInfo.tags.push(deprecationTag);
+            //             }
+            //         }
+            //     }
 
-                return quickInfo;
-            };
+            //     return quickInfo;
+            // };
 
             // Common logic for both suggestion and semantic diagnostics
             const checkDiagnostics = (
@@ -506,21 +513,21 @@ const init = ({ typescript: ts }) => {
                             return;
                         }
 
-                        // If the alias chain is not deprecated, check the symbol directly
-                        const symbol = getSymbolAtNode(checker, node);
-                        if (symbol && isSymbolDeprecatedRecursively(symbol, checker, log)) {
-                            const diagnostic = createDeprecatedDiagnostic(
-                                node,
-                                symbol,
-                                sourceFile,
-                                priorDiagnostics,
-                                log
-                            );
-                            if (diagnostic) {
-                                diagnostic.category = category;
-                                diagnostics.push(diagnostic);
-                            }
-                        }
+                        // // If the alias chain is not deprecated, check the symbol directly
+                        // const symbol = getSymbolAtNode(checker, node);
+                        // if (symbol && isSymbolDeprecatedRecursively(symbol, checker, log)) {
+                        //     const diagnostic = createDeprecatedDiagnostic(
+                        //         node,
+                        //         symbol,
+                        //         sourceFile,
+                        //         priorDiagnostics,
+                        //         log
+                        //     );
+                        //     if (diagnostic) {
+                        //         diagnostic.category = category;
+                        //         diagnostics.push(diagnostic);
+                        //     }
+                        // }
                         ts.forEachChild(node, visit);
                     };
 

@@ -1,13 +1,21 @@
 {
     "compilerOptions": {
+        "plugins": [
+            {
+                "name": "ts-extended-deprecation-plugin"
+            }
+        ],
         "module": "commonjs", // Node.js uses CommonJS
         "target": "es2017", // Choose your target ES version
         "outDir": "./dist", // Output compiled JavaScript files into the dist folder
         "declaration": true, // Optional: Generate declaration files
         "sourceMap": true, // Optional: Generate source maps for debugging
-        "rootDirs": ["src", "tests"],
-        "baseUrl": "./"
+        "rootDirs": ["src", "example"],
+        "baseUrl": "./",
+        "paths": {
+            "Aliases": ["example/aliases.ts"]
+        }
     },
-    "include": ["**/*"],
+    "include": ["src/**/*", "example/**/*"],
     "exclude": ["node_modules", "dist", "tests"]
 }
