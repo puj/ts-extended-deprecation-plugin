@@ -18,14 +18,9 @@
 
 ### Example Output
 
-```bash
-Deprecated symbol detected: oldFunction
-File: /path/to/your/file.ts
-  Line: 5
-  Symbol: oldFunction
-```
+![deprecatedBefore](https://github.com/user-attachments/assets/3f8a714d-0d22-4cea-b1fd-5d2369bd2846)
 
-This output shows the symbol name, file, and location of the deprecated symbol.
+![deprecatedAfter](https://github.com/user-attachments/assets/bf2a5ebe-1b53-483f-8ab5-6310a15f2e29)
 
 ## Usage
 
