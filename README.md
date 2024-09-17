@@ -23,7 +23,8 @@
     <td><img src="https://github.com/user-attachments/assets/bf2a5ebe-1b53-483f-8ab5-6310a15f2e29"/></td>
   </tr>
 </table>
-<strong>BEFORE:</strong> Deprecations are manually marked with comments and JSDoc, making them easy to miss.  
+<strong>BEFORE:</strong> Deprecations are manually marked with comments and JSDoc, making them easy to miss.
+
 <strong>AFTER:</strong> The plugin automatically highlights deprecated symbols directly in the code editor for immediate visibility.
 
 ## Usage

@@ -1,9 +1,6 @@
 import * as ts from "typescript";
 import {
-    findNodeAtPosition,
     getCommentsFromDeclaration,
-    getCommentsFromNode,
-    getSymbolAtNode,
     isDeclarationDeprecated,
     isNodeDeprecated,
     isSupportedFileType,
