@@ -1,11 +1,5 @@
 import * as ts from "typescript";
-import {
-    getCommentsFromDeclaration,
-    isDeclarationDeprecated,
-    isNodeDeprecated,
-    isSupportedFileType,
-    isSymbolDeprecated
-} from "./utils";
+import { getCommentsFromDeclaration, isDeclarationDeprecated, isNodeDeprecated, isSupportedFileType } from "./utils";
 import { Diagnostic } from "typescript";
 
 /**
@@ -158,17 +152,89 @@ const isImportDeclarationDeprecated = (
 
                             for (const element of namedBindings.elements) {
                                 const importName = element.name.text;
-                                const exportSymbol = exports.find(s => s.name === importName);
+                                let exportSymbol = exports.find(s => s.name === importName);
 
-                                // If the export symbol name doesn't match the current symbol, skip
-                                if (
-                                    optionalSymbolToMatch &&
-                                    exportSymbol?.getName() !== optionalSymbolToMatch.getName()
-                                ) {
-                                    log(
-                                        `[IMPORT] Skipping export "${importName} - ${exportSymbol?.getName()} - ${optionalSymbolToMatch.getName()}"`
-                                    );
-                                    continue;
+                                if (!exportSymbol) {
+                                    const allExports = moduleSymbol.exports;
+
+                                    const wildcardExports = [];
+                                    allExports.forEach(exportEntry => {
+                                        log(`[IMPORT] Export Entry: ${exportEntry.getName()}`);
+
+                                        // Check if the import is a wildcard import
+                                        log(`[IMPORT] Checking optional symbol: ${optionalSymbolToMatch?.getName()}`);
+
+                                        // Filter to all exports where name == "__export"
+                                        if (exportEntry.getName() === "__export") {
+                                            wildcardExports.push(exportEntry);
+                                        }
+                                    });
+
+                                    log(`[IMPORT] Found ${wildcardExports.length} wildcard exports`);
+                                    wildcardExports.forEach(wildcardExport => {
+                                        const exportSymbolDeclaration = wildcardExport.declarations?.[0];
+                                        log(
+                                            `[IMPORT] Checking wildcard export declaration: ${exportSymbolDeclaration?.getText()}`
+                                        );
+
+                                        log(
+                                            `[IMPORT] Wildcard module specifier: ${exportSymbolDeclaration.moduleSpecifier.getText()}`
+                                        );
+
+                                        const resolvedWildcardModule = ts.resolveModuleName(
+                                            exportSymbolDeclaration.moduleSpecifier.text,
+                                            sourceFile.fileName,
+                                            program.getCompilerOptions(),
+                                            ts.sys
+                                        );
+                                        log(
+                                            `[IMPORT] Resolved wildcard module: ${resolvedWildcardModule.resolvedModule}`
+                                        );
+
+                                        const resolvedWildcardFileName =
+                                            resolvedWildcardModule.resolvedModule.resolvedFileName;
+                                        log(
+                                            `[IMPORT] Resolved module "${exportSymbolDeclaration.moduleSpecifier.getText()}" to "${resolvedWildcardFileName}"`
+                                        );
+
+                                        const wildcardModuleSourceFile =
+                                            program.getSourceFile(resolvedWildcardFileName);
+
+                                        // Get the module symbol from the source file
+                                        const wildcardModuleSymbol =
+                                            checker.getSymbolAtLocation(wildcardModuleSourceFile);
+
+                                        const wildcardModuleExports = checker.getExportsOfModule(wildcardModuleSymbol);
+                                        log(
+                                            `[IMPORT] Wildcard exports: ${wildcardModuleExports
+                                                .map(e => e.getName())
+                                                .join(", ")}`
+                                        );
+
+                                        /**
+                                         * If optionalSymbolToMatch is provided we assume to know the symbol name we are looking for.
+                                         * If using importName as the symbol name, we will check if the wildcard module exports contain the symbol name.
+                                         */
+                                        const importNameToMatch = optionalSymbolToMatch?.getName() || importName;
+                                        const hasTargetExport = wildcardModuleExports.find(
+                                            e => e.getName() === importNameToMatch
+                                        );
+
+                                        if (hasTargetExport) {
+                                            exportSymbol = wildcardExport;
+                                        }
+                                    });
+                                } else {
+                                    // If the export symbol name doesn't match the current symbol, skip
+                                    if (
+                                        optionalSymbolToMatch &&
+                                        exportSymbol?.getName() !== optionalSymbolToMatch.getName()
+                                    ) {
+                                        log(
+                                            `[IMPORT] Skipping export "${importName} - ${exportSymbol?.getName()} - ${optionalSymbolToMatch.getName()}"`
+                                        );
+                                        continue;
+                                    }
                                 }
 
                                 const exportSymbolDeclaration = exportSymbol?.getDeclarations()?.[0];
@@ -235,15 +301,16 @@ const isImportDeclarationDeprecated = (
                                         if (isDeclarationDeprecated(declaration)) {
                                             log(`[IMPORT] Import "${importName}" is deprecated in "${moduleName}"`);
 
-                                            // Get the node of the named import within the original node
-                                            const importNode = node
-                                                .getChildren()
-                                                .find(child => ts.isNamedImports(child))
-                                                ?.getChildren()
-                                                .find(
-                                                    child =>
-                                                        ts.isImportSpecifier(child) && child.name.text === importName
-                                                );
+                                            // Recursively search node for importSpecifier matching imoprtname
+                                            const searchNodeForImportSpecifier = (node: ts.Node) => {
+                                                if (ts.isImportSpecifier(node) && node.name.text === importName) {
+                                                    return node;
+                                                }
+                                                return ts.forEachChild(node, searchNodeForImportSpecifier);
+                                            };
+                                            let importNode = searchNodeForImportSpecifier(node);
+
+                                            log(`[IMPORT] Import Node: ${importNode?.getText()}`);
 
                                             diagnostics.push(
                                                 createDeprecatedDiagnostic(
@@ -274,50 +341,6 @@ const isImportDeclarationDeprecated = (
         }
         return diagnostics;
     }
-};
-
-// Resolve the symbol and follow alias chain to check for deprecations
-const isSymbolDeprecatedRecursively = (
-    symbol: ts.Symbol,
-    checker: ts.TypeChecker,
-    log: (message: string) => void
-): boolean => {
-    let currentSymbol: ts.Symbol | undefined = symbol;
-    const visitedSymbols = new Set<ts.Symbol>();
-
-    while (currentSymbol) {
-        // Avoid cycles
-        if (visitedSymbols.has(currentSymbol)) break;
-        visitedSymbols.add(currentSymbol);
-
-        // Check for deprecation in the current symbol
-        if (isSymbolDeprecated(currentSymbol)) {
-            log(`Symbol ${currentSymbol.getName()} is deprecated.`);
-            return true;
-        }
-
-        const isAlias = currentSymbol.flags & ts.SymbolFlags.Alias;
-        if (!isAlias) {
-            break;
-        }
-        log(`Symbol ${currentSymbol.getName()} is an alias.`);
-
-        const immediateAliasedSymbol = checker.getImmediateAliasedSymbol(currentSymbol);
-        if (immediateAliasedSymbol) {
-            log(`Immediated alias from ${currentSymbol.getName()} to ${immediateAliasedSymbol.getName()}`);
-        }
-
-        // Resolve alias, if present, and continue the loop
-        const aliasedSymbol = checker.getAliasedSymbol(currentSymbol);
-        if (aliasedSymbol && aliasedSymbol !== currentSymbol) {
-            log(`Following alias from ${currentSymbol.getName()} to ${aliasedSymbol.getName()}`);
-            currentSymbol = aliasedSymbol;
-        } else {
-            break;
-        }
-    }
-
-    return false;
 };
 
 // The factory function that TypeScript expects
@@ -351,31 +374,6 @@ const init = ({ typescript: ts }) => {
 
             const checker: ts.TypeChecker | undefined = info.languageService.getProgram()?.getTypeChecker();
 
-            // Hook into the quick info to display tooltips
-            // proxy.getQuickInfoAtPosition = (fileName: string, position: number) => {
-            //     if (!isSupportedFileType(fileName)) return oldGetQuickInfoAtPosition(fileName, position);
-
-            //     const quickInfo: ts.QuickInfo = oldGetQuickInfoAtPosition(fileName, position);
-            //     const sourceFile = info.languageService.getProgram()?.getSourceFile(fileName);
-            //     const node = findNodeAtPosition(sourceFile, position);
-
-            //     if (node && checker) {
-            //         const symbol = checker.getSymbolAtLocation(node);
-            //         if (symbol && isSymbolDeprecatedRecursively(symbol, checker, log)) {
-            //             log(`Deprecated symbol detected: ${symbol.getName()}`);
-
-            //             // Create detailed deprecation message with source information
-            //             const deprecationTag = createDeprecatedQuickInfoTag(symbol, checker);
-            //             if (deprecationTag) {
-            //                 quickInfo.tags = quickInfo.tags || [];
-            //                 quickInfo.tags.push(deprecationTag);
-            //             }
-            //         }
-            //     }
-
-            //     return quickInfo;
-            // };
-
             // Common logic for both suggestion and semantic diagnostics
             const checkDiagnostics = (
                 fileName: string,
@@ -401,6 +399,7 @@ const init = ({ typescript: ts }) => {
                         } else if (!ts.isImportDeclaration(node) && !ts.isExportDeclaration(node)) {
                             // This will check for deprecated symbols in the source file by checkin the import declarations using the same logic as above
                             const symbol = checker.getSymbolAtLocation(node);
+
                             if (symbol) {
                                 // Find the first declaration associated with the symbol
                                 const declaration = symbol.getDeclarations()?.[0];
