@@ -15,3 +15,6 @@ export const d = "d";
 
 // @deprecated
 export { default as e } from "./default";
+
+// @deprecated
+export * from "./otherConstants";
