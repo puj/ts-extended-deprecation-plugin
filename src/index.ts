@@ -1,5 +1,11 @@
 import * as ts from "typescript";
-import { getCommentsFromDeclaration, isDeclarationDeprecated, isNodeDeprecated, isSupportedFileType } from "./utils";
+import {
+    getCommentsFromDeclaration,
+    getSymbolAtNode,
+    isDeclarationDeprecated,
+    isNodeDeprecated,
+    isSupportedFileType
+} from "./utils";
 import { Diagnostic } from "typescript";
 
 /**
@@ -91,6 +97,65 @@ const createDeprecatedQuickInfoTag = (symbol: ts.Symbol, checker: ts.TypeChecker
     };
 };
 
+type ImportCacheResultType = {
+    importDeclaration: ts.ImportDeclaration;
+    symbol: ts.Symbol;
+    diagnostics: Diagnostic[];
+    isDeprecated: boolean;
+};
+
+const importNodeCache = new Map<string, ts.Node | null>();
+const exportSymbolCache = new Map<ts.Symbol, Diagnostic>();
+const wildCardExportCache = new Map<ts.Symbol, ts.Symbol[]>();
+const importCache = new Map<string, ImportCacheResultType>();
+
+const getImportNodeCacheKey = (importDeclaration: ts.ImportDeclaration, importName: string) => {
+    return importDeclaration.getSourceFile().fileName + "-" + importDeclaration.getText() + "-" + importName;
+};
+
+const getCachedImportNodeFor = (importDeclaration: ts.Node, importName: string) => {
+    const key = getImportNodeCacheKey(importDeclaration as ts.ImportDeclaration, importName);
+    return importNodeCache.get(key);
+};
+
+const setCachedImportNodeFor = (importDeclaration: ts.Node, importName: string, importNode: ts.Node | null) => {
+    const key = getImportNodeCacheKey(importDeclaration as ts.ImportDeclaration, importName);
+    importNodeCache.set(key, importNode);
+};
+
+const getImportCacheKey = (importDeclaration: ts.ImportDeclaration, targetSymbol: ts.Symbol) => {
+    return (
+        importDeclaration.getSourceFile().fileName + "-" + importDeclaration.getText() + "-" + targetSymbol.getName()
+    );
+};
+
+const getCachedDiagnosticForImportDeclaration = (importDeclaration: ts.ImportDeclaration, targetSymbol: ts.Symbol) => {
+    const cacheKey = getImportCacheKey(importDeclaration, targetSymbol);
+    return importCache.get(cacheKey);
+};
+
+const addCachedDiagnosticForImportDeclaration = (
+    importDeclaration: ts.ImportDeclaration,
+    targetSymbol: ts.Symbol,
+    diagnostic: Diagnostic[]
+) => {
+    const cacheKey = getImportCacheKey(importDeclaration, targetSymbol);
+
+    const existingCache = importCache.get(cacheKey);
+    if (existingCache) {
+        existingCache.diagnostics = existingCache.diagnostics.concat(diagnostic);
+        existingCache.isDeprecated = true;
+        importCache.set(cacheKey, existingCache);
+    } else {
+        importCache.set(cacheKey, {
+            importDeclaration,
+            symbol: targetSymbol,
+            diagnostics: diagnostic,
+            isDeprecated: true
+        });
+    }
+};
+
 // Traverse imports and re-exports to resolve and check for deprecations
 const isImportDeclarationDeprecated = (
     currentNode: ts.Node,
@@ -152,27 +217,56 @@ const isImportDeclarationDeprecated = (
 
                             for (const element of namedBindings.elements) {
                                 const importName = element.name.text;
+                                const elementSymbol = checker.getSymbolAtLocation(element.name);
+                                const cachedImportResult = getCachedDiagnosticForImportDeclaration(node, elementSymbol);
+                                // if (cachedImportResult) {
+                                //     log(`[IMPORT] Found cached import result for symbol: ${elementSymbol.getName()}`);
+                                //     return cachedImportResult.diagnostics;
+                                // }
+
                                 let exportSymbol = exports.find(s => s.name === importName);
 
+                                // if (exportSymbol && exportSymbolCache.has(exportSymbol)) {
+                                //     log(`[IMPORT] Found cached export symbol: ${exportSymbol.getName()}`);
+                                //     const exportSymbolDiagnostic = exportSymbolCache.get(exportSymbol);
+                                //     if (exportSymbolDiagnostic) {
+                                //         exportSymbolDiagnostic.start = currentNode.getStart();
+                                //         exportSymbolDiagnostic.length = currentNode.getEnd() - currentNode.getStart();
+
+                                //         diagnostics.push(exportSymbolDiagnostic);
+                                //         addCachedDiagnosticForImportDeclaration(node, exportSymbol, [
+                                //             exportSymbolDiagnostic
+                                //         ]);
+                                //     }
+                                //     continue;
+                                // }
+
                                 if (!exportSymbol) {
-                                    const allExports = moduleSymbol.exports;
+                                    let wildcardExports = wildCardExportCache.get(moduleSymbol);
 
-                                    const wildcardExports = [];
-                                    allExports.forEach(exportEntry => {
-                                        log(`[IMPORT] Export Entry: ${exportEntry.getName()}`);
+                                    if (!wildcardExports) {
+                                        wildcardExports = [];
+                                        const allExports = moduleSymbol.exports;
+                                        allExports.forEach(exportEntry => {
+                                            log(`[IMPORT] Export Entry: ${exportEntry.getName()}`);
 
-                                        // Check if the import is a wildcard import
-                                        log(`[IMPORT] Checking optional symbol: ${optionalSymbolToMatch?.getName()}`);
+                                            // Check if the import is a wildcard import
+                                            log(
+                                                `[IMPORT] Checking optional symbol: ${optionalSymbolToMatch?.getName()}`
+                                            );
 
-                                        // Filter to all exports where name == "__export"
-                                        if (exportEntry.getName() === "__export") {
-                                            wildcardExports.push(exportEntry);
-                                        }
-                                    });
+                                            // Filter to all exports where name == "__export"
+                                            if (exportEntry.getName() === "__export") {
+                                                wildcardExports.push(exportEntry);
+                                            }
+                                        });
+                                        wildCardExportCache.set(moduleSymbol, wildcardExports);
+                                    }
 
                                     log(`[IMPORT] Found ${wildcardExports.length} wildcard exports`);
                                     wildcardExports.forEach(wildcardExport => {
-                                        const exportSymbolDeclaration = wildcardExport.declarations?.[0];
+                                        const exportSymbolDeclaration = wildcardExport
+                                            .declarations?.[0] as ts.ExportDeclaration;
                                         log(
                                             `[IMPORT] Checking wildcard export declaration: ${exportSymbolDeclaration?.getText()}`
                                         );
@@ -182,7 +276,7 @@ const isImportDeclarationDeprecated = (
                                         );
 
                                         const resolvedWildcardModule = ts.resolveModuleName(
-                                            exportSymbolDeclaration.moduleSpecifier.text,
+                                            (exportSymbolDeclaration.moduleSpecifier as any).text,
                                             sourceFile.fileName,
                                             program.getCompilerOptions(),
                                             ts.sys
@@ -243,7 +337,7 @@ const isImportDeclarationDeprecated = (
                                  * Check if the parent node of the export symbol is deprecated.
                                  */
                                 let exportSymbolParent = exportSymbolDeclaration?.parent;
-                                log(`[IMPORT] Checking parent node for deprecation: ${exportSymbolParent?.getText()}`);
+
                                 while (exportSymbolParent && !ts.isSourceFile(exportSymbolParent)) {
                                     const isExportSymbolParentDeprecated = isNodeDeprecated(
                                         checker,
@@ -251,35 +345,54 @@ const isImportDeclarationDeprecated = (
                                     );
                                     log(`[IMPORT] Parent node is deprecated: ${isExportSymbolParentDeprecated}`);
                                     if (isExportSymbolParentDeprecated) {
-                                        let importNode = undefined;
-                                        node.forEachChild(child => {
-                                            log(`[IMPORT] Child: ${child.getText()}`);
-                                            child.forEachChild(namedImport => {
-                                                log(`[IMPORT] Named Import: ${namedImport.getText()}`);
-                                                namedImport.forEachChild(importSpec => {
-                                                    log(`[IMPORT] Import Specifier: ${importSpec.getText()}`);
-                                                    if (importSpec.getText() === importName) {
-                                                        importNode = importSpec;
-                                                    }
+                                        let importNode = getCachedImportNodeFor(node, importName);
+                                        if (importNode === undefined) {
+                                            setCachedImportNodeFor(node, importName, null);
+                                            node.forEachChild(child => {
+                                                log(`[IMPORT] Child: ${child.getText()}`);
+                                                child.forEachChild(namedImport => {
+                                                    log(`[IMPORT] Named Import: ${namedImport.getText()}`);
+                                                    namedImport.forEachChild(importSpec => {
+                                                        log(`[IMPORT] Import Specifier: ${importSpec.getText()}`);
+                                                        if (importSpec.getText() === importName) {
+                                                            importNode = importSpec;
+                                                            setCachedImportNodeFor(node, importName, importNode);
+                                                        }
+                                                    });
                                                 });
                                             });
-                                        });
+                                        } else {
+                                            log(`[IMPORT] Found cached import node: ${importNode?.getText()}`);
+                                        }
 
-                                        diagnostics.push(
-                                            createDeprecatedDiagnostic(
-                                                importNode,
-                                                exportSymbol,
-                                                exportSymbolDeclaration.getSourceFile(),
-                                                [],
-                                                log,
-                                                exportSymbolDeclaration
-                                            )
+                                        const diagnostic = createDeprecatedDiagnostic(
+                                            importNode,
+                                            exportSymbol,
+                                            exportSymbolDeclaration.getSourceFile(),
+                                            [],
+                                            log,
+                                            exportSymbolDeclaration
                                         );
+                                        diagnostics.push(diagnostic);
+                                        addCachedDiagnosticForImportDeclaration(node, exportSymbol, [diagnostic]);
+
+                                        exportSymbolCache.set(exportSymbol, diagnostic);
                                     }
                                     exportSymbolParent = exportSymbolParent?.parent;
                                 }
 
                                 if (exportSymbol) {
+                                    const cachedImportResult = getCachedDiagnosticForImportDeclaration(
+                                        node,
+                                        exportSymbol
+                                    );
+                                    // if (cachedImportResult) {
+                                    //     log(
+                                    //         `[IMPORT] Found cached import result for symbol: ${exportSymbol.getName()}`
+                                    //     );
+                                    //     return cachedImportResult.diagnostics;
+                                    // }
+
                                     log(
                                         `[IMPORT] Checking export "${importName}" in module "${
                                             moduleSourceFile.getSourceFile().fileName
@@ -308,20 +421,24 @@ const isImportDeclarationDeprecated = (
                                                 }
                                                 return ts.forEachChild(node, searchNodeForImportSpecifier);
                                             };
-                                            let importNode = searchNodeForImportSpecifier(node);
+                                            let importNode = getCachedImportNodeFor(node, importName);
+                                            if (importNode === undefined) {
+                                                importNode = searchNodeForImportSpecifier(node);
+                                                setCachedImportNodeFor(node, importName, importNode);
+                                            }
 
                                             log(`[IMPORT] Import Node: ${importNode?.getText()}`);
 
-                                            diagnostics.push(
-                                                createDeprecatedDiagnostic(
-                                                    importNode,
-                                                    exportSymbol,
-                                                    node.getSourceFile(),
-                                                    [],
-                                                    log,
-                                                    declaration
-                                                )
+                                            const diagnostic = createDeprecatedDiagnostic(
+                                                importNode,
+                                                exportSymbol,
+                                                node.getSourceFile(),
+                                                [],
+                                                log,
+                                                declaration
                                             );
+                                            diagnostics.push(diagnostic);
+                                            addCachedDiagnosticForImportDeclaration(node, exportSymbol, [diagnostic]);
                                         }
                                     }
                                 } else {
@@ -339,6 +456,7 @@ const isImportDeclarationDeprecated = (
                 }
             }
         }
+        log(`[IMPORT] Returning diagnostics: ${diagnostics.length}`);
         return diagnostics;
     }
 };
@@ -363,11 +481,11 @@ const init = ({ typescript: ts }) => {
             // Logging to TypeScript Server
             const log = (message: string) => {
                 // Or use the logger if available
-                // if (info.project && info.project.projectService && info.project.projectService.logger) {
-                //     info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
-                // } else {
-                //     console.log(`[DEPRECATION PLUGIN]: ${message}`);
-                // }
+                if (info.project && info.project.projectService && info.project.projectService.logger) {
+                    info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
+                } else {
+                    console.log(`[DEPRECATION PLUGIN]: ${message}`);
+                }
             };
 
             log("Plugin Initialized - hotloading");
@@ -388,6 +506,24 @@ const init = ({ typescript: ts }) => {
                     log(`Checking ${fileName} for deprecated symbols`);
 
                     const visit = (node: ts.Node) => {
+                        // If not leaf node, skip
+                        if (node.getChildCount() > 0 && !ts.isImportDeclaration(node)) {
+                            ts.forEachChild(node, visit);
+                            return;
+                        }
+
+                        // Check if node start/end/category/source file is already in diagnostics
+                        diagnostics.some(diagnostic => {
+                            if (
+                                diagnostic.start === node.getStart() &&
+                                diagnostic.length === node.getEnd() - node.getStart() &&
+                                diagnostic.category === category &&
+                                diagnostic.file === sourceFile
+                            ) {
+                                return true;
+                            }
+                        });
+
                         // First we check for imports
                         const deprecatedAliasDiagnostics = isImportDeclarationDeprecated(node, checker, log, program);
                         if (deprecatedAliasDiagnostics?.length) {
@@ -421,18 +557,39 @@ const init = ({ typescript: ts }) => {
                                     if (ts.isImportDeclaration(importDeclaration)) {
                                         log(`Import parent: ${importDeclaration.getText()}`);
 
-                                        const deprecatedAliasDiagnostics = isImportDeclarationDeprecated(
-                                            importDeclaration,
-                                            checker,
-                                            log,
-                                            program,
-                                            symbol
-                                        );
-                                        if (deprecatedAliasDiagnostics?.length) {
-                                            for (const diagnostic of deprecatedAliasDiagnostics) {
-                                                diagnostic.start = node.getStart();
-                                                diagnostic.length = node.getEnd() - node.getStart();
-                                                diagnostics.push(diagnostic);
+                                        // const cachedImportResult = getCachedDiagnosticForImportDeclaration(
+                                        //     importDeclaration as ts.ImportDeclaration,
+                                        //     symbol
+                                        // );
+                                        const cachedImportResult = undefined;
+
+                                        if (cachedImportResult) {
+                                            log(
+                                                `Cached import for symbol: ${symbol.getName()}, found ${
+                                                    cachedImportResult.diagnostics.length
+                                                } diagnostics`
+                                            );
+                                            if (cachedImportResult.diagnostics?.length) {
+                                                for (const diagnostic of cachedImportResult.diagnostics) {
+                                                    diagnostic.start = node.getStart();
+                                                    diagnostic.length = node.getEnd() - node.getStart();
+                                                    diagnostics.push(diagnostic);
+                                                }
+                                            }
+                                        } else {
+                                            const deprecatedAliasDiagnostics = isImportDeclarationDeprecated(
+                                                importDeclaration,
+                                                checker,
+                                                log,
+                                                program,
+                                                symbol
+                                            );
+                                            if (deprecatedAliasDiagnostics?.length) {
+                                                for (const diagnostic of deprecatedAliasDiagnostics) {
+                                                    diagnostic.start = node.getStart();
+                                                    diagnostic.length = node.getEnd() - node.getStart();
+                                                    diagnostics.push(diagnostic);
+                                                }
                                             }
                                         }
                                     }
