@@ -107,7 +107,30 @@ type ImportCacheResultType = {
 const importNodeCache = new Map<string, ts.Node | null>();
 const exportSymbolCache = new Map<ts.Symbol, Diagnostic>();
 const wildCardExportCache = new Map<ts.Symbol, ts.Symbol[]>();
+const wildCardExportSymbolCache = new Map<string, ts.Symbol | null>();
 const importCache = new Map<string, ImportCacheResultType>();
+
+const getWildcardExportSymbolCacheKey = (moduleSymbol: ts.Symbol, importName: string) => {
+    return moduleSymbol.getName() + "-" + importName;
+};
+
+const getCachedWildcardExportSymbolFor = (moduleSymbol: ts.Symbol, importName: string) => {
+    const key = getWildcardExportSymbolCacheKey(moduleSymbol, importName);
+    return wildCardExportSymbolCache.get(key);
+};
+
+const setCachedWildcardExportSymbolFor = (
+    moduleSymbol: ts.Symbol,
+    importName: string,
+    exportSymbol: ts.Symbol | null
+) => {
+    const key = getWildcardExportSymbolCacheKey(moduleSymbol, importName);
+    wildCardExportSymbolCache.set(key, exportSymbol);
+    // Print cache
+    wildCardExportSymbolCache.forEach((value, key) => {
+        console.log(`[DEPRECATION PLUGIN] ExportSymbolCache: ${key} - ${value?.getName()}`);
+    });
+};
 
 const getImportNodeCacheKey = (importDeclaration: ts.ImportDeclaration, importName: string) => {
     return importDeclaration.getSourceFile().fileName + "-" + importDeclaration.getText() + "-" + importName;
@@ -225,6 +248,7 @@ const isImportDeclarationDeprecated = (
                                 // }
 
                                 let exportSymbol = exports.find(s => s.name === importName);
+                                const importNameToMatch = optionalSymbolToMatch?.getName() || importName;
 
                                 // if (exportSymbol && exportSymbolCache.has(exportSymbol)) {
                                 //     log(`[IMPORT] Found cached export symbol: ${exportSymbol.getName()}`);
@@ -242,82 +266,93 @@ const isImportDeclarationDeprecated = (
                                 // }
 
                                 if (!exportSymbol) {
-                                    let wildcardExports = wildCardExportCache.get(moduleSymbol);
+                                    exportSymbol = getCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch);
+                                    if (exportSymbol === undefined) {
+                                        setCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch, null);
+                                        let wildcardExports = wildCardExportCache.get(moduleSymbol);
 
-                                    if (!wildcardExports) {
-                                        wildcardExports = [];
-                                        const allExports = moduleSymbol.exports;
-                                        allExports.forEach(exportEntry => {
-                                            log(`[IMPORT] Export Entry: ${exportEntry.getName()}`);
+                                        if (!wildcardExports) {
+                                            wildcardExports = [];
+                                            const allExports = moduleSymbol.exports;
+                                            allExports.forEach(exportEntry => {
+                                                log(`[IMPORT] Export Entry: ${exportEntry.getName()}`);
 
-                                            // Check if the import is a wildcard import
+                                                // Check if the import is a wildcard import
+                                                log(
+                                                    `[IMPORT] Checking optional symbol: ${optionalSymbolToMatch?.getName()}`
+                                                );
+
+                                                // Filter to all exports where name == "__export"
+                                                if (exportEntry.getName() === "__export") {
+                                                    wildcardExports.push(exportEntry);
+                                                }
+                                            });
+                                            wildCardExportCache.set(moduleSymbol, wildcardExports);
+                                        }
+
+                                        log(`[IMPORT] Found ${wildcardExports.length} wildcard exports`);
+                                        wildcardExports.forEach(wildcardExport => {
+                                            const exportSymbolDeclaration = wildcardExport
+                                                .declarations?.[0] as ts.ExportDeclaration;
                                             log(
-                                                `[IMPORT] Checking optional symbol: ${optionalSymbolToMatch?.getName()}`
+                                                `[IMPORT] Checking wildcard export declaration: ${exportSymbolDeclaration?.getText()}`
                                             );
 
-                                            // Filter to all exports where name == "__export"
-                                            if (exportEntry.getName() === "__export") {
-                                                wildcardExports.push(exportEntry);
+                                            log(
+                                                `[IMPORT] Wildcard module specifier: ${exportSymbolDeclaration.moduleSpecifier.getText()}`
+                                            );
+
+                                            const resolvedWildcardModule = ts.resolveModuleName(
+                                                (exportSymbolDeclaration.moduleSpecifier as any).text,
+                                                sourceFile.fileName,
+                                                program.getCompilerOptions(),
+                                                ts.sys
+                                            );
+                                            log(
+                                                `[IMPORT] Resolved wildcard module: ${resolvedWildcardModule.resolvedModule}`
+                                            );
+
+                                            if (resolvedWildcardModule.resolvedModule) {
+                                                const resolvedWildcardFileName =
+                                                    resolvedWildcardModule.resolvedModule.resolvedFileName;
+                                                log(
+                                                    `[IMPORT] Resolved module "${exportSymbolDeclaration.moduleSpecifier.getText()}" to "${resolvedWildcardFileName}"`
+                                                );
+
+                                                const wildcardModuleSourceFile =
+                                                    program.getSourceFile(resolvedWildcardFileName);
+
+                                                // Get the module symbol from the source file
+                                                const wildcardModuleSymbol =
+                                                    checker.getSymbolAtLocation(wildcardModuleSourceFile);
+
+                                                const wildcardModuleExports =
+                                                    checker.getExportsOfModule(wildcardModuleSymbol);
+                                                log(
+                                                    `[IMPORT] Wildcard exports: ${wildcardModuleExports
+                                                        .map(e => e.getName())
+                                                        .join(", ")}`
+                                                );
+
+                                                /**
+                                                 * If optionalSymbolToMatch is provided we assume to know the symbol name we are looking for.
+                                                 * If using importName as the symbol name, we will check if the wildcard module exports contain the symbol name.
+                                                 */
+                                                const hasTargetExport = wildcardModuleExports.find(
+                                                    e => e.getName() === importNameToMatch
+                                                );
+
+                                                if (hasTargetExport) {
+                                                    exportSymbol = wildcardExport;
+                                                    setCachedWildcardExportSymbolFor(
+                                                        moduleSymbol,
+                                                        importNameToMatch,
+                                                        exportSymbol
+                                                    );
+                                                }
                                             }
                                         });
-                                        wildCardExportCache.set(moduleSymbol, wildcardExports);
                                     }
-
-                                    log(`[IMPORT] Found ${wildcardExports.length} wildcard exports`);
-                                    wildcardExports.forEach(wildcardExport => {
-                                        const exportSymbolDeclaration = wildcardExport
-                                            .declarations?.[0] as ts.ExportDeclaration;
-                                        log(
-                                            `[IMPORT] Checking wildcard export declaration: ${exportSymbolDeclaration?.getText()}`
-                                        );
-
-                                        log(
-                                            `[IMPORT] Wildcard module specifier: ${exportSymbolDeclaration.moduleSpecifier.getText()}`
-                                        );
-
-                                        const resolvedWildcardModule = ts.resolveModuleName(
-                                            (exportSymbolDeclaration.moduleSpecifier as any).text,
-                                            sourceFile.fileName,
-                                            program.getCompilerOptions(),
-                                            ts.sys
-                                        );
-                                        log(
-                                            `[IMPORT] Resolved wildcard module: ${resolvedWildcardModule.resolvedModule}`
-                                        );
-
-                                        const resolvedWildcardFileName =
-                                            resolvedWildcardModule.resolvedModule.resolvedFileName;
-                                        log(
-                                            `[IMPORT] Resolved module "${exportSymbolDeclaration.moduleSpecifier.getText()}" to "${resolvedWildcardFileName}"`
-                                        );
-
-                                        const wildcardModuleSourceFile =
-                                            program.getSourceFile(resolvedWildcardFileName);
-
-                                        // Get the module symbol from the source file
-                                        const wildcardModuleSymbol =
-                                            checker.getSymbolAtLocation(wildcardModuleSourceFile);
-
-                                        const wildcardModuleExports = checker.getExportsOfModule(wildcardModuleSymbol);
-                                        log(
-                                            `[IMPORT] Wildcard exports: ${wildcardModuleExports
-                                                .map(e => e.getName())
-                                                .join(", ")}`
-                                        );
-
-                                        /**
-                                         * If optionalSymbolToMatch is provided we assume to know the symbol name we are looking for.
-                                         * If using importName as the symbol name, we will check if the wildcard module exports contain the symbol name.
-                                         */
-                                        const importNameToMatch = optionalSymbolToMatch?.getName() || importName;
-                                        const hasTargetExport = wildcardModuleExports.find(
-                                            e => e.getName() === importNameToMatch
-                                        );
-
-                                        if (hasTargetExport) {
-                                            exportSymbol = wildcardExport;
-                                        }
-                                    });
                                 } else {
                                     // If the export symbol name doesn't match the current symbol, skip
                                     if (
@@ -481,11 +516,11 @@ const init = ({ typescript: ts }) => {
             // Logging to TypeScript Server
             const log = (message: string) => {
                 // Or use the logger if available
-                if (info.project && info.project.projectService && info.project.projectService.logger) {
-                    info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
-                } else {
-                    console.log(`[DEPRECATION PLUGIN]: ${message}`);
-                }
+                // if (info.project && info.project.projectService && info.project.projectService.logger) {
+                //     info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
+                // } else {
+                //     console.log(`[DEPRECATION PLUGIN]: ${message}`);
+                // }
             };
 
             log("Plugin Initialized - hotloading");
