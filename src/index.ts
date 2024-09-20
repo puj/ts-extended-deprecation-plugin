@@ -126,10 +126,6 @@ const setCachedWildcardExportSymbolFor = (
 ) => {
     const key = getWildcardExportSymbolCacheKey(moduleSymbol, importName);
     wildCardExportSymbolCache.set(key, exportSymbol);
-    // Print cache
-    wildCardExportSymbolCache.forEach((value, key) => {
-        console.log(`[DEPRECATION PLUGIN] ExportSymbolCache: ${key} - ${value?.getName()}`);
-    });
 };
 
 const getImportNodeCacheKey = (importDeclaration: ts.ImportDeclaration, importName: string) => {
