@@ -262,10 +262,16 @@ const isImportDeclarationDeprecated = (
                                 // }
 
                                 if (!exportSymbol) {
+                                    log(
+                                        `[IMPORT] Could not find export "${importName}" in module "${moduleName}", checking wildcard exports`
+                                    );
                                     exportSymbol = getCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch);
+                                    log(`[IMPORT] Found cached wildcard export: ${exportSymbol?.getName()}`);
                                     if (exportSymbol === undefined) {
+                                        log(`[IMPORT] Could not find cached wildcard export for "${importName}"`);
                                         setCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch, null);
                                         let wildcardExports = wildCardExportCache.get(moduleSymbol);
+                                        log(`[IMPORT] Checking ${wildcardExports?.length} wildcard exports`);
 
                                         if (!wildcardExports) {
                                             wildcardExports = [];
@@ -298,12 +304,29 @@ const isImportDeclarationDeprecated = (
                                                 `[IMPORT] Wildcard module specifier: ${exportSymbolDeclaration.moduleSpecifier.getText()}`
                                             );
 
-                                            const resolvedWildcardModule = ts.resolveModuleName(
+                                            let resolvedWildcardModule = ts.resolveModuleName(
                                                 (exportSymbolDeclaration.moduleSpecifier as any).text,
                                                 sourceFile.fileName,
                                                 program.getCompilerOptions(),
                                                 ts.sys
                                             );
+                                            if (!resolvedWildcardModule.resolvedModule) {
+                                                resolvedWildcardModule = ts.resolveModuleName(
+                                                    exportSymbolDeclaration.moduleSpecifier.getText(),
+                                                    moduleSourceFile.fileName,
+                                                    program.getCompilerOptions(),
+                                                    ts.sys
+                                                );
+                                            }
+                                            if (!resolvedWildcardModule.resolvedModule) {
+                                                resolvedWildcardModule = ts.resolveModuleName(
+                                                    moduleSourceFile.fileName,
+                                                    moduleSourceFile.fileName,
+                                                    program.getCompilerOptions(),
+                                                    ts.sys
+                                                );
+                                            }
+
                                             log(
                                                 `[IMPORT] Resolved wildcard module: ${resolvedWildcardModule.resolvedModule}`
                                             );
@@ -411,6 +434,7 @@ const isImportDeclarationDeprecated = (
                                     }
                                     exportSymbolParent = exportSymbolParent?.parent;
                                 }
+                                // At this point the exportSymobol should be populated
 
                                 if (exportSymbol) {
                                     const cachedImportResult = getCachedDiagnosticForImportDeclaration(
@@ -511,12 +535,21 @@ const init = ({ typescript: ts }) => {
 
             // Logging to TypeScript Server
             const log = (message: string) => {
-                // Or use the logger if available
-                // if (info.project && info.project.projectService && info.project.projectService.logger) {
-                //     info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
-                // } else {
-                //     console.log(`[DEPRECATION PLUGIN]: ${message}`);
+                // if (
+                //     !message.includes("getCateringPickupText") &&
+                //     !message.includes("hFromWildcard") &&
+                //     !message.includes("for deprecated symbols") &&
+                //     !message.includes("ildcard")
+                // ) {
+                //     return;
                 // }
+
+                // Or use the logger if available
+                if (info.project && info.project.projectService && info.project.projectService.logger) {
+                    info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
+                } else {
+                    console.log(`[DEPRECATION PLUGIN]: ${message}`);
+                }
             };
 
             log("Plugin Initialized - hotloading");
