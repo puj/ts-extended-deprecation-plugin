@@ -1,6 +1,6 @@
 {
     "name": "ts-extended-deprecation-plugin",
-    "version": "1.4.4",
+    "version": "1.4.5",
     "description": "A TypeScript Language Service plugin for detecting and highlighting deprecated symbols with annotations. Provides diagnostics and hover tooltips for deprecated symbols across TypeScript and JavaScript projects.",
     "repository": {
         "type": "git",

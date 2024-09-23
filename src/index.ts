@@ -106,7 +106,8 @@ type ImportCacheResultType = {
 
 const importNodeCache = new Map<string, ts.Node | null>();
 const exportSymbolCache = new Map<ts.Symbol, Diagnostic>();
-const wildCardExportCache = new Map<ts.Symbol, ts.Symbol[]>();
+const wildCardExportDeclarationsCache = new Map<ts.Symbol, ts.Declaration[]>();
+const wildCardExportDeclarationCache = new Map<string, ts.Declaration>();
 const wildCardExportSymbolCache = new Map<string, ts.Symbol | null>();
 const importCache = new Map<string, ImportCacheResultType>();
 
@@ -114,9 +115,23 @@ const getWildcardExportSymbolCacheKey = (moduleSymbol: ts.Symbol, importName: st
     return moduleSymbol.getName() + "-" + importName;
 };
 
+const getWildcardExportDeclarationFor = (moduleSymbol: ts.Symbol, importName: string) => {
+    const key = getWildcardExportSymbolCacheKey(moduleSymbol, importName);
+    return wildCardExportDeclarationCache.get(key);
+};
+
 const getCachedWildcardExportSymbolFor = (moduleSymbol: ts.Symbol, importName: string) => {
     const key = getWildcardExportSymbolCacheKey(moduleSymbol, importName);
     return wildCardExportSymbolCache.get(key);
+};
+
+const setCachedWildcardExportDeclarationFor = (
+    moduleSymbol: ts.Symbol,
+    importName: string,
+    exportDeclaration: ts.Declaration
+) => {
+    const key = getWildcardExportSymbolCacheKey(moduleSymbol, importName);
+    wildCardExportDeclarationCache.set(key, exportDeclaration);
 };
 
 const setCachedWildcardExportSymbolFor = (
@@ -244,6 +259,7 @@ const isImportDeclarationDeprecated = (
                                 // }
 
                                 let exportSymbol = exports.find(s => s.name === importName);
+                                let exportSymbolDeclaration = exportSymbol?.getDeclarations()?.[0];
                                 const importNameToMatch = optionalSymbolToMatch?.getName() || importName;
 
                                 // if (exportSymbol && exportSymbolCache.has(exportSymbol)) {
@@ -265,16 +281,18 @@ const isImportDeclarationDeprecated = (
                                     log(
                                         `[IMPORT] Could not find export "${importName}" in module "${moduleName}", checking wildcard exports`
                                     );
-                                    exportSymbol = getCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch);
-                                    log(`[IMPORT] Found cached wildcard export: ${exportSymbol?.getName()}`);
+                                    // exportSymbol = getCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch);
+                                    // log(`[IMPORT] Found cached wildcard export: ${exportSymbol?.getName()}`);
                                     if (exportSymbol === undefined) {
                                         log(`[IMPORT] Could not find cached wildcard export for "${importName}"`);
-                                        setCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch, null);
-                                        let wildcardExports = wildCardExportCache.get(moduleSymbol);
-                                        log(`[IMPORT] Checking ${wildcardExports?.length} wildcard exports`);
+                                        // setCachedWildcardExportSymbolFor(moduleSymbol, importNameToMatch, null);
+                                        let wildcardExportDeclarations: ts.Declaration[] =
+                                            wildCardExportDeclarationsCache.get(moduleSymbol);
 
-                                        if (!wildcardExports) {
-                                            wildcardExports = [];
+                                        log(`[IMPORT] Checking ${wildcardExportDeclarations?.length} wildcard exports`);
+
+                                        if (!wildcardExportDeclarations) {
+                                            wildcardExportDeclarations = [];
                                             const allExports = moduleSymbol.exports;
                                             allExports.forEach(exportEntry => {
                                                 log(`[IMPORT] Export Entry: ${exportEntry.getName()}`);
@@ -286,33 +304,44 @@ const isImportDeclarationDeprecated = (
 
                                                 // Filter to all exports where name == "__export"
                                                 if (exportEntry.getName() === "__export") {
-                                                    wildcardExports.push(exportEntry);
+                                                    // Print all declarations
+
+                                                    exportEntry.getDeclarations()?.forEach(declaration => {
+                                                        log(
+                                                            `[IMPORT] Wildcard Export Declaration: ${declaration.getText()}`
+                                                        );
+
+                                                        wildcardExportDeclarations.push(declaration);
+                                                    });
                                                 }
                                             });
-                                            wildCardExportCache.set(moduleSymbol, wildcardExports);
+                                            wildCardExportDeclarationsCache.set(
+                                                moduleSymbol,
+                                                wildcardExportDeclarations
+                                            );
                                         }
 
-                                        log(`[IMPORT] Found ${wildcardExports.length} wildcard exports`);
-                                        wildcardExports.forEach(wildcardExport => {
-                                            const exportSymbolDeclaration = wildcardExport
-                                                .declarations?.[0] as ts.ExportDeclaration;
+                                        log(`[IMPORT] Found ${wildcardExportDeclarations.length} wildcard exports`);
+                                        wildcardExportDeclarations.forEach(wildcardExport => {
+                                            const wildcardExportSymbolDeclaration =
+                                                wildcardExport as ts.ExportDeclaration;
                                             log(
-                                                `[IMPORT] Checking wildcard export declaration: ${exportSymbolDeclaration?.getText()}`
+                                                `[IMPORT] Checking wildcard export declaration: ${wildcardExportSymbolDeclaration?.getText()}`
                                             );
 
                                             log(
-                                                `[IMPORT] Wildcard module specifier: ${exportSymbolDeclaration.moduleSpecifier.getText()}`
+                                                `[IMPORT] Wildcard module specifier: ${wildcardExportSymbolDeclaration.moduleSpecifier.getText()}`
                                             );
 
                                             let resolvedWildcardModule = ts.resolveModuleName(
-                                                (exportSymbolDeclaration.moduleSpecifier as any).text,
-                                                sourceFile.fileName,
+                                                (wildcardExportSymbolDeclaration.moduleSpecifier as any).text,
+                                                moduleSourceFile.fileName,
                                                 program.getCompilerOptions(),
                                                 ts.sys
                                             );
                                             if (!resolvedWildcardModule.resolvedModule) {
                                                 resolvedWildcardModule = ts.resolveModuleName(
-                                                    exportSymbolDeclaration.moduleSpecifier.getText(),
+                                                    wildcardExportSymbolDeclaration.moduleSpecifier.getText(),
                                                     moduleSourceFile.fileName,
                                                     program.getCompilerOptions(),
                                                     ts.sys
@@ -335,7 +364,7 @@ const isImportDeclarationDeprecated = (
                                                 const resolvedWildcardFileName =
                                                     resolvedWildcardModule.resolvedModule.resolvedFileName;
                                                 log(
-                                                    `[IMPORT] Resolved module "${exportSymbolDeclaration.moduleSpecifier.getText()}" to "${resolvedWildcardFileName}"`
+                                                    `[IMPORT] Resolved module "${wildcardExportSymbolDeclaration.moduleSpecifier.getText()}" to "${resolvedWildcardFileName}"`
                                                 );
 
                                                 const wildcardModuleSourceFile =
@@ -362,12 +391,16 @@ const isImportDeclarationDeprecated = (
                                                 );
 
                                                 if (hasTargetExport) {
-                                                    exportSymbol = wildcardExport;
-                                                    setCachedWildcardExportSymbolFor(
-                                                        moduleSymbol,
-                                                        importNameToMatch,
-                                                        exportSymbol
+                                                    exportSymbol = getSymbolAtNode(checker, wildcardExport.parent);
+                                                    exportSymbolDeclaration = wildcardExport;
+                                                    log(
+                                                        `[IMPORT] Found wildcard export: ${importNameToMatch}-${wildcardExport?.getText()}, caching symbol: ${exportSymbol?.getName()}`
                                                     );
+                                                    // setCachedWildcardExportSymbolFor(
+                                                    //     moduleSymbol,
+                                                    //     importNameToMatch,
+                                                    //     exportSymbol
+                                                    // );
                                                 }
                                             }
                                         });
@@ -384,8 +417,6 @@ const isImportDeclarationDeprecated = (
                                         continue;
                                     }
                                 }
-
-                                const exportSymbolDeclaration = exportSymbol?.getDeclarations()?.[0];
 
                                 /**
                                  * Check if the parent node of the export symbol is deprecated.
@@ -453,16 +484,15 @@ const isImportDeclarationDeprecated = (
                                             moduleSourceFile.getSourceFile().fileName
                                         }"`
                                     );
-                                    const declarations = exportSymbol.getDeclarations();
-                                    if (declarations && declarations.length > 0) {
-                                        const declaration = declarations[0];
 
+                                    const declaration = exportSymbolDeclaration || exportSymbol.getDeclarations()?.[0];
+                                    if (declaration && !!declaration.parent) {
                                         const declarationComments = getCommentsFromDeclaration(declaration);
                                         if (declarationComments.length > 0) {
                                             log(
-                                                `[IMPORT] Found comments on declaration: ${declarationComments.join(
+                                                `[IMPORT] Found comments on declaration:  ${declarationComments.join(
                                                     "\n"
-                                                )}`
+                                                )} \n${declaration.getText()}`
                                             );
                                         }
 
@@ -535,21 +565,12 @@ const init = ({ typescript: ts }) => {
 
             // Logging to TypeScript Server
             const log = (message: string) => {
-                // if (
-                //     !message.includes("getCateringPickupText") &&
-                //     !message.includes("hFromWildcard") &&
-                //     !message.includes("for deprecated symbols") &&
-                //     !message.includes("ildcard")
-                // ) {
-                //     return;
-                // }
-
                 // Or use the logger if available
-                if (info.project && info.project.projectService && info.project.projectService.logger) {
-                    info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
-                } else {
-                    console.log(`[DEPRECATION PLUGIN]: ${message}`);
-                }
+                // if (info.project && info.project.projectService && info.project.projectService.logger) {
+                //     info.project.projectService.logger.info(`[DEPRECATION PLUGIN]: ${message}`);
+                // } else {
+                //     console.log(`[DEPRECATION PLUGIN]: ${message}`);
+                // }
             };
 
             log("Plugin Initialized - hotloading");
@@ -565,6 +586,14 @@ const init = ({ typescript: ts }) => {
             ) => {
                 const sourceFile = info.languageService.getProgram()?.getSourceFile(fileName);
                 const diagnostics: Diagnostic[] = [];
+
+                // Reset caches
+                importNodeCache.clear();
+                exportSymbolCache.clear();
+                wildCardExportDeclarationsCache.clear();
+                wildCardExportDeclarationCache.clear();
+                wildCardExportSymbolCache.clear();
+                importCache.clear();
 
                 if (sourceFile && checker && isSupportedFileType(fileName)) {
                     log(`Checking ${fileName} for deprecated symbols`);

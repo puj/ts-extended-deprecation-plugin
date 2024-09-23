@@ -17,4 +17,6 @@ export const d = "d";
 export { default as e } from "./default";
 
 // @deprecated
-export * from "./otherConstants";
+export * from "./wildcardConstants";
+
+export * from "./moreWildcardConstants";
