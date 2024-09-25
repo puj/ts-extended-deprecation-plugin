@@ -8,6 +8,40 @@ import {
 } from "./utils";
 import { Diagnostic } from "typescript";
 
+const areDiagnosticEqual = (a: Diagnostic, b: Diagnostic) => {
+    return (
+        a.start === b.start &&
+        a.length === b.length &&
+        a.code === b.code &&
+        a.category === b.category &&
+        a.file === b.file
+    );
+};
+
+const getUniqueDiagnostics = (priorDiagnostics: Diagnostic[], diagnostics: Diagnostic[]) => {
+    const uniqueDiagnostics: Diagnostic[] = [];
+
+    // Add prior diagnostics
+    priorDiagnostics.forEach(priorDiagnostic => {
+        const isUnique = !diagnostics.some(diagnostic => areDiagnosticEqual(diagnostic, priorDiagnostic));
+
+        if (isUnique) {
+            uniqueDiagnostics.push(priorDiagnostic);
+        }
+    });
+
+    // Add new diagnostics
+    diagnostics.forEach(diagnostic => {
+        const isUnique = !uniqueDiagnostics.some(uniqueDiagnostic => areDiagnosticEqual(uniqueDiagnostic, diagnostic));
+
+        if (isUnique) {
+            uniqueDiagnostics.push(diagnostic);
+        }
+    });
+
+    return uniqueDiagnostics;
+};
+
 /**
  *
  * @param node
@@ -20,13 +54,14 @@ import { Diagnostic } from "typescript";
  */
 const createDeprecatedDiagnostic = (
     node: ts.Node,
+    symbolName: string,
     symbol: ts.Symbol,
     sourceFile: ts.SourceFile,
     priorDiagnostics: Diagnostic[],
     log: (message: string) => void,
     declarationOverride?: ts.NamedDeclaration
 ): Diagnostic | null => {
-    log(`Creating diagnostic for deprecated symbol: ${symbol.getName()} - ${node.getText()}`);
+    log(`Creating diagnostic for deprecated symbol: ${symbolName} - ${node.getText()}`);
 
     const diagnosticStart = node.getStart();
     const diagnosticEnd = node.getEnd() - node.getStart();
@@ -45,12 +80,12 @@ const createDeprecatedDiagnostic = (
     );
 
     if (!alreadyReported) {
-        log(`Adding diagnostic for deprecated symbol: ${symbol.getName()}`);
+        log(`Adding diagnostic for deprecated symbol: ${symbolName}`);
         return {
             file: sourceFile,
             start: diagnosticStart,
             length: diagnosticEnd,
-            messageText: `'${symbol.getName()}' is deprecated.`,
+            messageText: `'${symbolName}' is deprecated.`,
             category: ts.DiagnosticCategory.Warning,
             reportsDeprecated: true,
             code: diagnosticCode,
@@ -452,6 +487,7 @@ const isImportDeclarationDeprecated = (
 
                                         const diagnostic = createDeprecatedDiagnostic(
                                             importNode,
+                                            optionalSymbolToMatch?.getName() || importName,
                                             exportSymbol,
                                             exportSymbolDeclaration.getSourceFile(),
                                             [],
@@ -516,6 +552,7 @@ const isImportDeclarationDeprecated = (
 
                                             const diagnostic = createDeprecatedDiagnostic(
                                                 importNode,
+                                                optionalSymbolToMatch?.getName() || importName,
                                                 exportSymbol,
                                                 node.getSourceFile(),
                                                 [],
@@ -696,7 +733,7 @@ const init = ({ typescript: ts }) => {
                     visit(sourceFile);
                 }
 
-                return priorDiagnostics.concat(diagnostics);
+                return getUniqueDiagnostics(priorDiagnostics, diagnostics);
             };
 
             // Override suggestion diagnostics
